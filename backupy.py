@@ -7,7 +7,7 @@
 
 import os
 import sys
-import datetime
+import time
 import configparser
 import pickle
 import subprocess
@@ -139,7 +139,12 @@ class BackupyApp(object):
     def backup_loop(self):
         source_order = self._get_source_order()
         sources = self.get_config('sources')
+        time_limit = int(self.get_config('backup', 'time_limit'))
+        finish_time = time.time() + time_limit * 3600
         for source in source_order:
+            if time.time() > finish_time:
+                self.logger.info('backup halted due to timelimit')
+                break
             destination = os.path.join(
                 self.get_config('backup', 'destination'), sources[source])
             self.logger.info(
