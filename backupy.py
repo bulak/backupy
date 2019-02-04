@@ -99,6 +99,10 @@ class BackupyApp(object):
                                          'last_source': None})
         self.logger.info('Initilizing...')
         self.logger.debug('Cache info: {}'.format(self.cache))
+        if sys.version_info.minor < 5:
+            self._process = self._process_3_4
+        else:
+            self._process = self._process_3_5
 
     @property
     def app_path():
@@ -136,10 +140,44 @@ class BackupyApp(object):
         source_order = source_order[pivot_index:] + source_order[:pivot_index]
         return source_order
 
+    def _process_3_4(self, r_command):
+        try:
+            r_process = subprocess.check_output(args=r_command, shell=True,
+                                                stderr=subprocess.STDOUT)
+        except subprocess.CalledProcessError as err:
+            self.cache.update(last_state=FAILED)
+            self.logger.error(
+                'rsync returned non-zero exit code: {}'.format(
+                    err.returncode))
+            for line in err.output.splitlines():
+                self.logger.error(
+                    '[rsync] %s', line.decode("utf-8"))
+        else:
+            self.cache.update(last_state=SUCCESS)
+            self.logger.info('backup successfully completed:')
+            for line in r_process.splitlines():
+                self.logger.info('[rsync] %s', line.decode("utf-8"))
+    def _process_3_5(self, r_command):
+        r_process = subprocess.run(args=r_command, shell=True,
+                                   stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE)
+        if not r_process.returncode == 0:
+            self.cache.update(last_state=FAILED)
+            self.logger.error(
+                'rsync returned non-zero exit code: {}'.format(
+                    r_process.returncode))
+            for line in r_process.stderr.splitlines():
+                self.logger.error(
+                    '[rsync] %s', line.decode("utf-8"))
+        else:
+            self.cache.update(last_state=SUCCESS)
+            self.logger.info('backup successfully completed:')
+            for line in r_process.stdout.splitlines():
+                self.logger.info('[rsync] %s', line.decode("utf-8"))
     def backup_loop(self):
         source_order = self._get_source_order()
         sources = self.get_config('sources')
-        time_limit = int(self.get_config('backup', 'time_limit'))
+        time_limit = float(self.get_config('backup', 'time_limit'))
         finish_time = time.time() + time_limit * 3600
         for source in source_order:
             if time.time() > finish_time:
@@ -153,22 +191,7 @@ class BackupyApp(object):
             r_command = _get_rysnc_command(source=source,
                                            destination=destination,
                                            options=self.get_config('rsync'))
-            r_process = subprocess.run(args=r_command, shell=True,
-                                       stdout=subprocess.PIPE,
-                                       stderr=subprocess.PIPE)
-            if not r_process.returncode == 0:
-                self.cache.update(last_state=FAILED)
-                self.logger.error(
-                    'rsync returned non-zero exit code: {}'.format(
-                        r_process.returncode))
-                for line in r_process.stderr.splitlines():
-                    self.logger.error(
-                        '[rsync] %s', line.decode("utf-8"))
-            else:
-                self.cache.update(last_state=SUCCESS)
-                self.logger.info('backup successfully completed:')
-                for line in r_process.stdout.splitlines():
-                    self.logger.info('[rsync] %s', line.decode("utf-8"))
+            self._process(r_command)
 
 
 def main():
